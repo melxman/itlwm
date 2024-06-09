@@ -306,7 +306,7 @@ iwm_add_sta_cmd(struct iwm_softc *sc, struct iwm_node *in, int update, unsigned 
             }
         }
         add_sta_cmd.tfd_queue_msk = sc->agg_queue_mask;
-        IEEE80211_ADDR_COPY(&add_sta_cmd.addr, in->in_ni.ni_bssid);
+        IEEE80211_ADDR_COPY(&add_sta_cmd.addr, in->in_macaddr);
     }
     add_sta_cmd.add_modify = update ? 1 : 0;
     add_sta_cmd.station_flags_msk
@@ -315,8 +315,8 @@ iwm_add_sta_cmd(struct iwm_softc *sc, struct iwm_node *in, int update, unsigned 
     if (update)
         add_sta_cmd.modify_mask |= (IWM_STA_MODIFY_TID_DISABLE_TX);
     
-    if (in->in_ni.ni_flags & IEEE80211_NODE_HT) {
-        XYLog("%s line=%d\n", __FUNCTION__, __LINE__);
+    if ((in->in_ni.ni_flags & IEEE80211_NODE_HT) ||
+        (in->in_ni.ni_flags & IEEE80211_NODE_VHT)) {
         add_sta_cmd.station_flags_msk
         |= htole32(IWM_STA_FLG_MAX_AGG_SIZE_MSK |
                    IWM_STA_FLG_AGG_MPDU_DENS_MSK);
@@ -403,7 +403,7 @@ iwm_add_aux_sta(struct iwm_softc *sc)
     if (isset(sc->sc_enabled_capa, IWM_UCODE_TLV_CAPA_DQA_SUPPORT)) {
         qid = IWM_DQA_AUX_QUEUE;
         err = iwm_enable_txq(sc, IWM_AUX_STA_ID, qid,
-                             IWM_TX_FIFO_MCAST, 0, 0, 0);
+                             IWM_TX_FIFO_MCAST, 0, IWM_MAX_TID_COUNT, 0);
     } else {
         qid = IWM_AUX_QUEUE;
         err = iwm_enable_ac_txq(sc, qid, IWM_TX_FIFO_MCAST);

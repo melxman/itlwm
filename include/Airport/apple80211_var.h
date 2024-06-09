@@ -486,13 +486,13 @@ struct apple80211_scan_result
     uint8_t               unk2;
     u_int32_t             asr_age;        // (ms) non-zero for cached scan result // 0x84
 
-    u_int16_t             unk3;
-    int16_t               asr_ie_len;
+    u_int16_t             unk3;             // 0x88
+    int16_t               asr_ie_len;       // 0x8A
 #if __IO80211_TARGET < __MAC_12_0
-    uint32_t              asr_unk3;
-    void*                 asr_ie_data;
+    uint32_t              asr_unk3;         // 0x8C
+    void*                 asr_ie_data;      // 90
 #else
-    uint8_t               asr_ie_data[1024];
+    uint8_t               asr_ie_data[1024];    // 0x8C
 #endif
 } __attribute__((packed));
 
@@ -569,11 +569,15 @@ enum apple80211_card_capability
 
 enum apple80211_virtual_interface_type
 {
+#if __IO80211_TARGET < __MAC_13_0
     APPLE80211_VIF_P2P_DEVICE   = 1,
-    APPLE80211_VIF_P2P_CLIENT   = 2,
-    APPLE80211_VIF_P2P_GO       = 3,
-    APPLE80211_VIF_AWDL         = 4,
-    APPLE80211_VIF_SOFT_AP      = 5,
+#else
+    APPLE80211_VIF_P2P_DEVICE   = 3,
+#endif
+    APPLE80211_VIF_P2P_CLIENT,
+    APPLE80211_VIF_P2P_GO,
+    APPLE80211_VIF_AWDL,
+    APPLE80211_VIF_SOFT_AP,
     
     APPLE80211_VIF_MAX
 };
@@ -590,6 +594,14 @@ enum apple80211_ie_type
 enum apple80211_assoc_flags {
     APPLE80211_ASSOC_F_CLOSED    = 1,    // flag: scan was directed, needed to remember closed networks
 };
+
+enum IO80211LinkState
+{
+    kIO80211NetworkLinkUndefined,            // Starting link state when an interface is created
+    kIO80211NetworkLinkDown,                // Interface not capable of transmitting packets
+    kIO80211NetworkLinkUp,                    // Interface capable of transmitting packets
+};
+typedef enum IO80211LinkState IO80211LinkState;
 
 // Kernel messages
 
@@ -640,18 +652,30 @@ struct apple80211_status_msg_hdr
 #define APPLE80211_M_AWDL_AVAILABILITY_WINDOW_START 42
 #define APPLE80211_M_AWDL_AVAILABILITY_WINDOW_EXTENSIONS_END    43
 #define APPLE80211_M_AWDL_SYNC_STATE_CHANGED 46
+#define APPLE80211_M_AWDL_PEER_PRESENCE      47
 #define APPLE80211_M_RESET_INTERFACE         49
 #define APPLE80211_M_PEER_CREDIT_GRANT       50
+#define APPLE80211_M_CHANNEL_SWITCH          54
 #define APPLE80211_M_DRIVER_AVAILABLE        55
 #define APPLE80211_M_INTERFACE_STATE         58
 #define APPLE80211_M_LINK_ADDRESS_CHANGED    59
 #define APPLE80211_M_BGSCAN_CACHED_NETWORK_AVAILABLE    63
+#define APPLE80211_M_AWDL_STATISTICS         65
+#define APPLE80211_M_AWDL_REALTIME_MODE_START   67
+#define APPLE80211_M_AWDL_REALTIME_MODE_END  68
 #define APPLE80211_M_ROAM_START              70
 #define APPLE80211_M_ROAM_END                71
+#define APPLE80211_M_DUMP_LOGS               79
+#define APPLE80211_M_LEAKY_AP_STATISTICS     81
+#define APPLE80211_M_RANGING_MEASUREMENT_DONE   83
 #define APPLE80211_M_AWDL_DFS_CSA            88
 #define APPLE80211_M_TCPKA_TIMEOUT           91
 #define APPLE80211_M_AWDL_DFS_CSA_COMPLETE   94
+#define APPLE80211_M_BSS_STEERING_REQUEST_EVENT 140
+#define APPLE80211_M_AWDL_HPP_STATISTICS     142
 #define APPLE80211_M_ACTION_FRAME            143
+#define APPLE80211_M_AWDL_APP_SPECIFIC_INFO  144
+#define APPLE80211_M_WSEC_NOTIFICATION       146
 
 
 #define APPLE80211_M_MAX                     170

@@ -95,15 +95,6 @@ extern int _start(struct kmod_info*, void*);
 
 extern int timingsafe_bcmp(const void *b1, const void *b2, size_t n);
 
-static inline void* _MallocZero(vm_size_t size)
-{
-    void *ret = IOMalloc(size);
-    if (ret != NULL) {
-        bzero(ret, size);
-    }
-    return ret;
-}
-
 /*
  * ppsratecheck(): packets (or events) per second limitation.
  */
@@ -427,6 +418,7 @@ struct ieee80211com {
 				    struct ieee80211_node *);
 	void			(*ic_updateslot)(struct ieee80211com *);
 	void			(*ic_updateedca)(struct ieee80211com *);
+    void            (*ic_updatedtim)(struct ieee80211com *);
 	void			(*ic_set_tim)(struct ieee80211com *, int, int);
 	int			(*ic_set_key)(struct ieee80211com *,
 				    struct ieee80211_node *,
@@ -505,7 +497,7 @@ struct ieee80211com {
 	u_int8_t		ic_des_essid[IEEE80211_NWID_LEN];
 	struct ieee80211_channel *ic_des_chan;	/* desired channel */
 	u_int8_t		ic_des_bssid[IEEE80211_ADDR_LEN];
-#if (defined AIRPORT) && (defined USE_APPLE_SUPPLICANT)
+#ifdef USE_APPLE_SUPPLICANT
 	u_int8_t		ic_rsn_ie_override[257];
 #endif
     u_int16_t       ic_deauth_reason;
@@ -539,8 +531,10 @@ struct ieee80211com {
 	enum ieee80211_cipher	ic_rsngroupcipher;
 	enum ieee80211_cipher	ic_rsngroupmgmtcipher;
 
+#ifdef notyet
 	struct ieee80211_defrag	ic_defrag[IEEE80211_DEFRAG_SIZE];
 	int			ic_defrag_cur;
+#endif
 
 	u_int8_t		*ic_tim_bitmap;
 	u_int			ic_tim_len;
@@ -565,6 +559,7 @@ struct ieee80211com {
     uint16_t        ic_vht_rx_mcs_map;
     uint16_t        ic_vht_tx_highest;
     uint16_t        ic_vht_rx_highest;
+    uint16_t        ic_vht_sup_mcs[howmany(80, NBBY)];
     
     /* HE state */
     struct ieee80211_he_cap_elem ic_he_cap_elem;   /* Fixed portion of the HE capabilities element. */
@@ -655,6 +650,7 @@ struct ieee80211_ess {
 #define IEEE80211_C_AMSDU_IN_AMPDU 0x00020000 /* CAPABILITY: Rx AMSDU inside AMPDU */
 #define IEEE80211_C_TX_AMPDU_SETUP_IN_HW 0x00040000 /* CAPABILITY: BA negotiation in HW */
 #define IEEE80211_C_SUPPORTS_VHT_EXT_NSS_BW 0x00080000  /* CAPABILITY: for 160mhz */
+#define IEEE80211_C_TX_AMPDU_SETUP_IN_RS 0x00100000
 
 /* flags for ieee80211_fix_rate() */
 #define	IEEE80211_F_DOSORT	0x00000001	/* sort rate list */
@@ -667,7 +663,7 @@ struct ieee80211_ess {
 #define IEEE80211_EVT_COUNTRY_CODE_UPDATE       3
 #define IEEE80211_EVT_SCAN_DONE                 4
 
-void	ieee80211_ifattach(struct _ifnet *);
+void	ieee80211_ifattach(struct _ifnet *, IOEthernetController *controller);
 void	ieee80211_ifdetach(struct _ifnet *);
 void	ieee80211_channel_init(struct _ifnet *);
 void	ieee80211_media_init(struct _ifnet *);

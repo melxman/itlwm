@@ -131,8 +131,11 @@ extern const struct ieee80211_ht_rateset ieee80211_std_ratesets_11n[];
 #define IEEE80211_VHT_RATESET_MIMO2_160_SGI 15
 #define IEEE80211_VHT_NUM_RATESETS		16
 
-/* Maximum number of rates in a HT rateset. */
+/* Maximum number of rates in a VHT rateset. */
 #define IEEE80211_VHT_RATESET_MAX_NRATES	10
+
+/* Number of MCS indices represented by struct ieee80211_vht_rateset. */
+#define IEEE80211_VHT_RATESET_NUM_MCS   IEEE80211_VHT_RATESET_MAX_NRATES
 
 struct ieee80211_vht_rateset {
 	uint32_t nrates;
@@ -158,6 +161,9 @@ extern const struct ieee80211_vht_rateset ieee80211_std_ratesets_11ac[];
 
 /* Maximum number of rates in a HT rateset. */
 #define IEEE80211_HE_RATESET_MAX_NRATES    12
+
+/* Number of MCS indices represented by struct ieee80211_he_rateset. */
+#define IEEE80211_HE_RATESET_NUM_MCS    IEEE80211_HE_RATESET_MAX_NRATES
 
 struct ieee80211_he_rateset {
     uint32_t nrates;
@@ -228,7 +234,8 @@ enum {
 struct ieee80211_rxinfo {
 	u_int32_t		rxi_flags;
 	u_int32_t		rxi_tstamp;
-	int			rxi_rssi;
+	int             rxi_rssi;
+    uint8_t         rxi_chan;
 };
 #define IEEE80211_RXI_HWDEC		0x00000001
 #define IEEE80211_RXI_AMPDU_DONE	0x00000002
@@ -420,6 +427,7 @@ struct ieee80211_node {
     uint8_t ni_ppe_thres[IEEE80211_HE_PPE_THRES_MAX_LEN]; /* Holds the PPE Thresholds data. */
     uint32_t        ni_he_oper_params;
     uint16_t        ni_he_oper_nss_set;
+    uint8_t         ni_he_optional[8];
     
 	/* Timeout handlers which trigger Tx Block Ack negotiation. */
 	CTimeout*		ni_addba_req_to[IEEE80211_NUM_TID];
@@ -478,8 +486,8 @@ struct ieee80211_node {
 #define IEEE80211_NODE_VHT		0x10000	/* VHT negotiated */
 #define IEEE80211_NODE_HTCAP		0x20000	/* claims to support HT */
 #define IEEE80211_NODE_VHTCAP       0x40000 /* claims to support VHT */
-#define IEEE80211_NODE_VHT_SGI80    0x80000    /* SGI on 20 MHz negotiated */ 
-#define IEEE80211_NODE_VHT_SGI160   0x100000    /* SGI on 40 MHz negotiated */
+#define IEEE80211_NODE_VHT_SGI80    0x80000    /* SGI on 80 MHz negotiated */
+#define IEEE80211_NODE_VHT_SGI160   0x100000    /* SGI on 160 MHz negotiated */
 #define IEEE80211_NODE_HE       0x200000    /* HE negotiated */
 
 	/* If not NULL, this function gets called when ni_refcnt hits zero. */
@@ -488,7 +496,9 @@ struct ieee80211_node {
 	void *			ni_unref_arg;
 	size_t 			ni_unref_arg_size;
     
+#ifdef AIRPORT
     uint8_t verb[0x1024];//冗余信息 zxy
+#endif
 };
 
 RB_HEAD(ieee80211_tree, ieee80211_node);
@@ -597,6 +607,39 @@ ieee80211_node_supports_vht_sgi160(struct ieee80211_node *ni)
         (ni->ni_vhtcaps & IEEE80211_VHTCAP_SHORT_GI_160);
 }
 
+static inline int
+ieee80211_node_supports_sgi(struct ieee80211_node *ni)
+{
+    if (ni->ni_flags & IEEE80211_NODE_HE)
+        return 0;
+    if (ni->ni_flags & IEEE80211_NODE_VHT) {
+        switch (ni->ni_chw) {
+            case IEEE80211_CHAN_WIDTH_20:
+                return ieee80211_node_supports_ht_sgi20(ni);
+            case IEEE80211_CHAN_WIDTH_40:
+                return ieee80211_node_supports_ht_sgi40(ni);
+            case IEEE80211_CHAN_WIDTH_80:
+                return ieee80211_node_supports_vht_sgi80(ni);
+            case IEEE80211_CHAN_WIDTH_80P80:
+            case IEEE80211_CHAN_WIDTH_160:
+                return ieee80211_node_supports_vht_sgi160(ni);
+            default:
+                return false;
+        }
+    }
+    if (ni->ni_flags & IEEE80211_NODE_HT) {
+        switch (ni->ni_chw) {
+            case IEEE80211_CHAN_WIDTH_20:
+                return ieee80211_node_supports_ht_sgi20(ni);
+            case IEEE80211_CHAN_WIDTH_40:
+                return ieee80211_node_supports_ht_sgi40(ni);
+            default:
+                return false;
+        }
+    }
+    return 0;
+}
+
 struct ieee80211com;
 
 typedef void ieee80211_iter_func(void *, struct ieee80211_node *);
@@ -621,10 +664,6 @@ struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *,
 		const struct ieee80211_frame *);
 struct ieee80211_node *ieee80211_find_txnode(struct ieee80211com *,
 		const u_int8_t *);
-struct ieee80211_node *
-		ieee80211_find_node_for_beacon(struct ieee80211com *,
-		const u_int8_t *, const struct ieee80211_channel *,
-		const char *, u_int8_t);
 void ieee80211_release_node(struct ieee80211com *,
 		struct ieee80211_node *);
 void ieee80211_node_cleanup(struct ieee80211com *, struct ieee80211_node *);
@@ -639,6 +678,9 @@ void ieee80211_setup_htcaps(struct ieee80211_node *, const uint8_t *,
 void ieee80211_clear_htcaps(struct ieee80211_node *);
 int ieee80211_setup_htop(struct ieee80211_node *, const uint8_t *,
     uint8_t, int);
+void ieee80211_setup_vhtcaps(struct ieee80211com *, struct ieee80211_node *, const uint8_t *);
+void ieee80211_setup_vhtopmode(struct ieee80211_node *, const uint8_t *);
+void ieee80211_clear_vhtcaps(struct ieee80211_node *);
 void ieee80211_setup_hecaps(struct ieee80211_node *, const uint8_t *,
                            uint8_t);
 int ieee80211_setup_heop(struct ieee80211_node *, const uint8_t *,

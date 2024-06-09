@@ -66,7 +66,6 @@ int iwn_debug = 1;
 #define DPRINTFN(n, x)    do { ; } while (0)
 #endif
 
-#define abs(N) ((N<0)?(-N):(N))
 #define M_DEVBUF 2
 
 #ifdef DELAY
@@ -151,8 +150,12 @@ getDriverController()
 
 IOReturn ItlIwn::enable(IONetworkInterface *netif)
 {
-    XYLog("%s\n", __FUNCTION__);
+    XYLog("%s\n", __PRETTY_FUNCTION__);
     struct _ifnet *ifp = &com.sc_ic.ic_ac.ac_if;
+    if (ifp->if_flags & IFF_UP) {
+        XYLog("%s already in activating state\n", __FUNCTION__);
+        return kIOReturnSuccess;
+    }
     ifp->if_flags |= IFF_UP;
     iwn_activate(&com, DVACT_RESUME);
     iwn_activate(&com, DVACT_WAKEUP);
@@ -163,6 +166,10 @@ IOReturn ItlIwn::disable(IONetworkInterface *netif)
 {
     XYLog("%s\n", __FUNCTION__);
     struct _ifnet *ifp = &com.sc_ic.ic_ac.ac_if;
+    if (!(ifp->if_flags & IFF_UP)) {
+        XYLog("%s already in diactivating state\n", __FUNCTION__);
+        return kIOReturnSuccess;
+    }
     ifp->if_flags &= ~IFF_UP;
     iwn_activate(&com, DVACT_QUIESCE);
     return kIOReturnSuccess;
@@ -340,8 +347,6 @@ iwn_attach(struct iwn_softc *sc, struct pci_attach_args *pa)
 {
     struct ieee80211com *ic = &sc->sc_ic;
     struct _ifnet *ifp = &ic->ic_if;
-    const char *intrstr;
-    pci_intr_handle_t ih;
     pcireg_t memtype, reg;
     int i, error;
 
@@ -388,7 +393,7 @@ iwn_attach(struct iwn_softc *sc, struct pci_attach_args *pa)
         return false;
     }
 
-    int msiIntrIndex = 0;
+    int msiIntrIndex = -1;
     for (int index = 0; ; index++)
     {
         int interruptType;
@@ -401,12 +406,16 @@ iwn_attach(struct iwn_softc *sc, struct pci_attach_args *pa)
             break;
         }
     }
+    if (msiIntrIndex == -1) {
+        XYLog("%s: can't find MSI interrupt controller\n", DEVNAME(sc));
+        return false;
+    }
 
     sc->sc_ih = IOFilterInterruptEventSource::filterInterruptEventSource(this,
                                                                          (IOInterruptEventSource::Action)&ItlIwn::iwn_intr, &ItlIwn::intrFilter
                                                                          ,pa->pa_tag, msiIntrIndex);
     if (sc->sc_ih == NULL || pa->workloop->addEventSource(sc->sc_ih) != kIOReturnSuccess) {
-        XYLog("%s: can't establish interrupt", DEVNAME(sc));
+        XYLog("%s: can't establish interrupt\n", DEVNAME(sc));
         return false;
     }
     sc->sc_ih->enable();
@@ -541,12 +550,12 @@ iwn_attach(struct iwn_softc *sc, struct pci_attach_args *pa)
             ieee80211_std_rateset_11a;
     }
     if (sc->sc_flags & IWN_FLAG_HAS_11N) {
-        int ntxstreams = sc->ntxchains;
-        int nrxstreams = sc->nrxchains;
-        
         /* Set supported HT rates. */
         if (ic->ic_userflags & IEEE80211_F_NOMIMO)
-            ntxstreams = nrxstreams = 1;
+            sc->ntxchains = sc->nrxchains = 1;
+
+        int ntxstreams = sc->ntxchains;
+        int nrxstreams = sc->nrxchains;
 
         ic->ic_sup_mcs[0] = 0xff;        /* MCS 0-7 */
         if (nrxstreams > 1)
@@ -566,8 +575,6 @@ iwn_attach(struct iwn_softc *sc, struct pci_attach_args *pa)
     
     ic->ic_max_rssi = IWN_MAX_DBM - IWN_MIN_DBM;
 
-    ifp->controller = getController();
-    ifp->if_snd = IOPacketQueue::withCapacity(getTxQueueSize());
     ifp->if_softc = sc;
     ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST | IFF_DEBUG;
     ifp->if_ioctl = iwn_ioctl;
@@ -576,7 +583,7 @@ iwn_attach(struct iwn_softc *sc, struct pci_attach_args *pa)
     memcpy(ifp->if_xname, sc->sc_dev.dv_xname, IFNAMSIZ);
 
     if_attach(ifp);
-    ieee80211_ifattach(ifp);
+    ieee80211_ifattach(ifp, getController());
     ic->ic_node_alloc = iwn_node_alloc;
     ic->ic_bgscan_start = iwn_bgscan;
     ic->ic_newassoc = iwn_newassoc;
@@ -1748,7 +1755,7 @@ iwn_read_eeprom_enhinfo(struct iwn_softc *sc)
 
     memset(sc->enh_maxpwr, 0, sizeof sc->enh_maxpwr);
     for (i = 0; i < nitems(enhinfo); i++) {
-        if (enhinfo[i].chan == 0 || enhinfo[i].reserved != 0)
+        if ((enhinfo[i].flags & IWN_TXP_VALID) == 0)
             continue;    /* Skip invalid entries. */
 
         maxpwr = 0;
@@ -1875,6 +1882,8 @@ iwn_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
         /* Reset state to handle re- and disassociations. */
         sc->rxon.associd = 0;
         sc->rxon.filter &= ~htole32(IWN_FILTER_BSS);
+        sc->rxon.flags &= ~htole32(IWN_RXON_HT_CHANMODE_MIXED2040 |
+                                   IWN_RXON_HT_CHANMODE_PURE40 | IWN_RXON_HT_HT40MINUS);
         sc->calib.state = IWN_CALIB_STATE_INIT;
         sc->agg_queue_mask = 0;
         error = that->iwn_cmd(sc, IWN_CMD_RXON, &sc->rxon, sc->rxonsz, 1);
@@ -1888,21 +1897,20 @@ iwn_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
         /* Make the link LED blink while we're scanning. */
         that->iwn_set_led(sc, IWN_LED_LINK, 10, 10);
 
-        if ((error = that->iwn_scan(sc, IEEE80211_CHAN_2GHZ, 0)) != 0) {
-            XYLog("%s: could not initiate scan\n",
-                sc->sc_dev.dv_xname);
-            return error;
+        if ((sc->sc_flags & IWN_FLAG_BGSCAN) == 0) {
+            ieee80211_set_link_state(ic, LINK_STATE_DOWN);
+            ieee80211_node_cleanup(ic, ic->ic_bss);
         }
         if (ifp->if_flags & IFF_DEBUG)
             XYLog("%s: %s -> %s\n", ifp->if_xname,
                 ieee80211_state_name[ic->ic_state],
                 ieee80211_state_name[nstate]);
-        if ((sc->sc_flags & IWN_FLAG_BGSCAN) == 0) {
-            ieee80211_set_link_state(ic, LINK_STATE_DOWN);
-            ieee80211_node_cleanup(ic, ic->ic_bss);
-        }
         ic->ic_state = nstate;
-        return 0;
+        if ((error = that->iwn_scan(sc, IEEE80211_CHAN_2GHZ, 0)) != 0) {
+            printf("%s: could not initiate scan\n",
+                sc->sc_dev.dv_xname);
+        }
+        return error;
 
     case IEEE80211_S_ASSOC:
         if (ic->ic_state != IEEE80211_S_RUN)
@@ -2009,7 +2017,6 @@ iwn_ccmp_decap(struct iwn_softc *sc, mbuf_t m, struct ieee80211_node *ni)
          (uint64_t)ivp[6] << 32 |
          (uint64_t)ivp[7] << 40;
     if (pn <= *prsc) {
-        DPRINTF(("CCMP replayed\n"));
         ic->ic_stats.is_ccmp_replays++;
         return 1;
     }
@@ -2060,8 +2067,6 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
     struct ieee80211_frame *wh;
     struct ieee80211_rxinfo rxi;
     struct ieee80211_node *ni;
-    struct ieee80211_channel *bss_chan = NULL;
-    uint8_t saved_bssid[IEEE80211_ADDR_LEN] = { 0 };
     mbuf_t m, m1;
     struct iwn_rx_stat *stat;
     caddr_t head;
@@ -2119,13 +2124,11 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
     if (ic->ic_opmode == IEEE80211_M_MONITOR) {
         /* Allow control frames in monitor mode. */
         if (len < sizeof (struct ieee80211_frame_cts)) {
-            DPRINTF(("frame too short: %d\n", len));
             ic->ic_stats.is_rx_tooshort++;
             ifp->netStat->inputErrors++;
             return;
         }
     } else if (len < sizeof (*wh)) {
-        DPRINTF(("frame too short: %d\n", len));
         ic->ic_stats.is_rx_tooshort++;
         ifp->netStat->inputErrors++;
         return;
@@ -2207,7 +2210,7 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
     }
     ni = ieee80211_find_rxnode(ic, wh);
 
-    rxi.rxi_flags = 0;
+    memset(&rxi, 0, sizeof(rxi));
     if (((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) != IEEE80211_FC0_TYPE_CTL)
         && (wh->i_fc[1] & IEEE80211_FC1_PROTECTED) &&
         !IEEE80211_IS_MULTICAST(wh->i_addr1) &&
@@ -2249,17 +2252,6 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
     chan = stat->chan;
     if (chan > IEEE80211_CHAN_MAX)
         chan = IEEE80211_CHAN_MAX;
-
-    /* Fix current channel. */
-    if (ni == ic->ic_bss) {
-        /*
-         * We may switch ic_bss's channel during scans.
-         * Record the current channel so we can restore it later.
-         */
-        bss_chan = ni->ni_chan;
-        IEEE80211_ADDR_COPY(&saved_bssid, ni->ni_macaddr);
-    }
-    ni->ni_chan = &ic->ic_channels[chan];
 
 #if NBPFILTER > 0
     if (sc->sc_drvbpf != NULL) {
@@ -2307,15 +2299,8 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
 
     /* Send the frame to the 802.11 layer. */
     rxi.rxi_rssi = rssi;
-    rxi.rxi_tstamp = 0;    /* unused */
+    rxi.rxi_chan = chan;
     ieee80211_inputm(ifp, m, ni, &rxi, ml);
-
-    /*
-     * ieee80211_inputm() might have changed our BSS.
-     * Restore ic_bss's channel if we are still in the same BSS.
-     */
-    if (ni == ic->ic_bss && IEEE80211_ADDR_EQ(saved_bssid, ni->ni_macaddr))
-        ni->ni_chan = bss_chan;
 
     /* Node is no longer needed. */
     ieee80211_release_node(ic, ni);
@@ -2377,8 +2362,7 @@ iwn_ht_single_rate_control(struct iwn_softc *sc, struct ieee80211_node *ni,
     struct ieee80211com *ic = &sc->sc_ic;
     struct iwn_node *wn = (struct iwn_node *)ni;
     int mcs = rate;
-    const struct ieee80211_ra_rate *rs =
-    ieee80211_ra_get_rateset(&wn->rn, ic, ni, rate);
+    const struct ieee80211_ra_rate *rs;
     unsigned int retries = 0, i;
     
     /*
@@ -2395,6 +2379,7 @@ iwn_ht_single_rate_control(struct iwn_softc *sc, struct ieee80211_node *ni,
     
     wn->lq_rate_mismatch = 0;
     
+    rs = ieee80211_ra_get_rateset(&wn->rn, ic, ni, rate);
     /*
      * Firmware has attempted rates in this rate set in sequence.
      * Retries at a basic rate are counted against the minimum MCS.
@@ -3612,7 +3597,10 @@ iwn_tx(struct iwn_softc *sc, mbuf_t m, struct ieee80211_node *ni)
         }
     }
 
-    if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
+    if (type == IEEE80211_FC0_TYPE_CTL &&
+        subtype == IEEE80211_FC0_SUBTYPE_BAR)
+        tx->id = wn->id;
+    else if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
         type != IEEE80211_FC0_TYPE_DATA)
         tx->id = sc->broadcast_id;
     else
@@ -3815,8 +3803,7 @@ _iwn_start_task(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3
             break;
 
         /* Encapsulate and send data frames. */
-//        m = ifq_dequeue(&ifp->if_snd);
-        m = ifp->if_snd->lockDequeue();
+        m = ifq_dequeue(&ifp->if_snd);
         if (m == NULL)
             break;
 #if NBPFILTER > 0
@@ -4060,7 +4047,7 @@ iwn_set_link_quality(struct iwn_softc *sc, struct ieee80211_node *ni)
     struct iwn_cmd_link_quality linkq;
     struct ieee80211_rateset *rs = &ni->ni_rates;
     uint8_t txant;
-    int i, ridx, ridx_min, ridx_max, j, sgi_ok = 0, is_40mhz = 0, mimo, tab = 0, rflags = 0;
+    int i, ridx, ridx_min, ridx_max, j, mimo, tab = 0, rflags = 0;
 
     /* Use the first valid TX antenna. */
     txant = IWN_LSB(sc->txchainmask);
@@ -4073,22 +4060,17 @@ iwn_set_link_quality(struct iwn_softc *sc, struct ieee80211_node *ni)
     linkq.ampdu_threshold = 3;
     linkq.ampdu_limit = htole16(4000);    /* 4ms */
 
-    if (ic->ic_flags & IEEE80211_F_USEPROT)
-        if (sc->hw_type != IWN_HW_REV_TYPE_4965)
+#if 0 // RTS/CTS protection not yet tested
+    if (ni->ni_flags & IEEE80211_NODE_HT &&
+        sc->agg_queue_mask > 0 &&
+        ic->ic_flags & IEEE80211_F_USEPROT)
+        if (sc->hw_type != IWN_HW_REV_TYPE_4965 &&
+            sc->hw_type != IWN_HW_REV_TYPE_5300 &&
+            sc->hw_type != IWN_HW_REV_TYPE_5150 &&
+            sc->hw_type != IWN_HW_REV_TYPE_5350 &&
+            sc->hw_type != IWN_HW_REV_TYPE_5100)
             linkq.flags |= IWN_LINK_QUAL_FLAGS_SET_STA_TLC_RTS;
-
-    if (ieee80211_node_supports_ht_sgi20(ni)) {
-        sgi_ok = 1;
-    }
-    
-    if (ni->ni_chw == IEEE80211_CHAN_WIDTH_40) {
-        is_40mhz = 1;
-        if (ieee80211_node_supports_ht_sgi40(ni)) {
-            sgi_ok = 1;
-        } else {
-            sgi_ok = 0;
-        }
-    }
+#endif
     
     /*
      * Fill the LQ rate selection table with legacy and/or HT rates
@@ -4119,17 +4101,20 @@ iwn_set_link_quality(struct iwn_softc *sc, struct ieee80211_node *ni)
                 (!mimo && iwn_is_mimo_ht_plcp(ht_plcp)))
                 continue;
             for (i = ni->ni_txmcs; i >= 0; i--) {
-                if (isclr(ni->ni_rxmcs, i))
+                if (ic->ic_tx_mcs_set == IEEE80211_TX_MCS_SET_DEFINED &&
+                    isclr(ni->ni_rxmcs, i))
                     continue;
-                if (ridx == iwn_mcs2ridx[i]) {
-                    tab = ht_plcp;
-                    rflags |= IWN_RFLAG_MCS;
-                    if (sgi_ok)
-                        rflags |= IWN_RFLAG_SGI;
-                    if (is_40mhz)
-                        rflags |= IWN_RFLAG_HT40;
+                if (ridx != iwn_mcs2ridx[i])
+                    continue;
+                tab = ht_plcp;
+                rflags |= IWN_RFLAG_MCS;
+                /* First two Tx attempts may use 40MHz/SGI. */
+                if (j > 1)
                     break;
-                }
+                if (iwn_rxon_ht40_enabled(sc))
+                    rflags |= IWN_RFLAG_HT40;
+                if (ieee80211_ra_use_ht_sgi(ni))
+                    rflags |= IWN_RFLAG_SGI;
             }
         } else if (plcp != IWN_RATE_INVM_PLCP) {
             for (i = ni->ni_txrate; i >= 0; i--) {

@@ -185,6 +185,7 @@ pointer_t __mptr = (pointer_t)(ptr);                    \
 
 #define time_after(a,b)    \
 ((long)(b) - (long)(a) < 0)
+#define time_is_before_jiffies(a) time_after(ticks, a)
 
 #define DMA_BIT_MASK(n)    (((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
 
@@ -253,6 +254,10 @@ static inline int atomic_inc_and_test(volatile SInt32 * addr)
 #define atomic_inc(v) OSIncrementAtomic(v)
 #define atomic_dec(v) OSDecrementAtomic(v)
 
-#define abs(N) ((N<0)?(-N):(N))
+#if __has_builtin(__builtin_abs)
+#define abs(N) __builtin_abs((N))
+#else
+#define abs(N) (((N)<0)?-(N):(N))
+#endif /* __has_builtin(__builtin_abs) */
 
 #endif /* kernel_h */

@@ -120,6 +120,7 @@
  */
 
 #include "ItlIwm.hpp"
+#include "rs.h"
 
 uint16_t ItlIwm::
 iwm_scan_rx_chain(struct iwm_softc *sc)
@@ -152,10 +153,10 @@ iwm_scan_rate_n_flags(struct iwm_softc *sc, int flags, int no_cck)
     tx_ant = (1 << sc->sc_scan_last_antenna) << IWM_RATE_MCS_ANT_POS;
     
     if ((flags & IEEE80211_CHAN_2GHZ) && !no_cck)
-        return htole32(IWM_RATE_1M_PLCP | IWM_RATE_MCS_CCK_MSK |
+        return htole32(IWL_RATE_1M_PLCP | RATE_MCS_CCK_MSK |
                        tx_ant);
     else
-        return htole32(IWM_RATE_6M_PLCP | tx_ant);
+        return htole32(IWL_RATE_6M_PLCP | tx_ant);
 }
 
 uint8_t ItlIwm::
@@ -310,6 +311,12 @@ iwm_fill_probe_req(struct iwm_softc *sc, struct iwm_scan_probe_req *preq)
             frm = ieee80211_add_xrates(frm, rs);
         preq->band_data[1].len = htole16(frm - pos);
         remain -= frm - pos;
+        if (ic->ic_flags & IEEE80211_F_VHTON) {
+            if (remain < sizeof(struct ieee80211_ie_vhtcap))
+                return ENOBUFS;
+            frm = ieee80211_add_vhtcaps(frm, ic);
+            remain -= frm - pos;
+        }
     }
     
     /* Send 11n IEs on both 2GHz and 5GHz bands. */
@@ -321,11 +328,7 @@ iwm_fill_probe_req(struct iwm_softc *sc, struct iwm_scan_probe_req *preq)
         frm = ieee80211_add_htcaps(frm, ic);
         /* XXX add WME info? */
     }
-    if (ic->ic_flags & IEEE80211_F_VHTON) {
-        if (remain < sizeof(struct ieee80211_ie_vhtcap))
-            return ENOBUFS;
-        frm = ieee80211_add_vhtcaps(frm, ic);
-    }
+
     preq->common_data.len = htole16(frm - pos);
     
     return 0;
@@ -386,7 +389,9 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
         req->scan_flags |=
         htole32(IWM_LMAC_SCAN_FLAG_PRE_CONNECTION);
     if (isset(sc->sc_enabled_capa,
-              IWM_UCODE_TLV_CAPA_DS_PARAM_SET_IE_SUPPORT))
+              IWM_UCODE_TLV_CAPA_DS_PARAM_SET_IE_SUPPORT) &&
+              isset(sc->sc_enabled_capa,
+              IWM_UCODE_TLV_CAPA_WFA_TPC_REP_IE_SUPPORT))
         req->scan_flags |= htole32(IWM_LMAC_SCAN_FLAGS_RRM_ENABLED);
     
     req->flags = htole32(IWM_PHY_BAND_24);
@@ -637,6 +642,8 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
         req->v1.passive_dwell = 110;
         req->v1.fragmented_dwell = 44;
         req->v1.extended_dwell = 90;
+
+        req->v1.scan_priority = htole32(IWM_SCAN_PRIORITY_HIGH);
     }
     
     if (bgscan) {
@@ -654,8 +661,7 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
             req->v1.suspend_time = timeout;
         }
     }
-    
-    req->v1.scan_priority = htole32(IWM_SCAN_PRIORITY_HIGH);
+
     req->ooc_priority = htole32(IWM_SCAN_PRIORITY_HIGH);
     
     cmd_data = iwm_get_scan_req_umac_data(sc, req);
@@ -673,6 +679,10 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     
     req->general_flags = htole32(IWM_UMAC_SCAN_GEN_FLAGS_PASS_ALL |
                                  IWM_UMAC_SCAN_GEN_FLAGS_ITER_COMPLETE);
+    if (isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_ADAPTIVE_DWELL_V2)) {
+        req->v8.general_flags2 =
+        IWM_UMAC_SCAN_GEN_FLAGS2_ALLOW_CHNL_REORDER;
+    }
     
     /* Check if we're doing an active directed scan. */
     if (ic->ic_des_esslen != 0) {
@@ -693,7 +703,9 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
         req->general_flags |= htole32(IWM_UMAC_SCAN_GEN_FLAGS_PASSIVE);
     
     if (isset(sc->sc_enabled_capa,
-              IWM_UCODE_TLV_CAPA_DS_PARAM_SET_IE_SUPPORT))
+              IWM_UCODE_TLV_CAPA_DS_PARAM_SET_IE_SUPPORT) &&
+              isset(sc->sc_enabled_capa,
+              IWM_UCODE_TLV_CAPA_WFA_TPC_REP_IE_SUPPORT))
         req->general_flags |=
         htole32(IWM_UMAC_SCAN_GEN_FLAGS_RRM_ENABLED);
     
@@ -723,6 +735,27 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     return err;
 }
 
+void ItlIwm::
+iwm_mcc_update(struct iwm_softc *sc, struct iwm_mcc_chub_notif *notif)
+{
+    struct ieee80211com *ic = &sc->sc_ic;
+    struct _ifnet *ifp = IC2IFP(ic);
+    
+    snprintf(sc->sc_fw_mcc, sizeof(sc->sc_fw_mcc), "%c%c",
+             (le16toh(notif->mcc) & 0xff00) >> 8, le16toh(notif->mcc) & 0xff);
+    if (sc->sc_fw_mcc_int != notif->mcc && sc->sc_ic.ic_event_handler) {
+        (*sc->sc_ic.ic_event_handler)(&sc->sc_ic, IEEE80211_EVT_COUNTRY_CODE_UPDATE, NULL);
+    }
+    sc->sc_fw_mcc_int = notif->mcc;
+    
+    if (ifp->if_flags & IFF_DEBUG) {
+        DPRINTFN(3, ("%s: firmware has detected regulatory domain '%s' "
+               "(0x%x)\n", DEVNAME(sc), sc->sc_fw_mcc, le16toh(notif->mcc)));
+    }
+    
+    /* TODO: Schedule a task to send MCC_UPDATE_CMD? */
+}
+
 uint8_t ItlIwm::
 iwm_ridx2rate(struct ieee80211_rateset *rs, int ridx)
 {
@@ -731,26 +764,11 @@ iwm_ridx2rate(struct ieee80211_rateset *rs, int ridx)
     
     for (i = 0; i < rs->rs_nrates; i++) {
         rval = (rs->rs_rates[i] & IEEE80211_RATE_VAL);
-        if (rval == iwm_rates[ridx].rate)
+        if (rval == ieee80211_std_rateset_11g.rs_rates[ridx])
             return rs->rs_rates[i];
     }
     
     return 0;
-}
-
-int ItlIwm::
-iwm_rval2ridx(int rval)
-{
-    int ridx;
-    
-    for (ridx = 0; ridx < nitems(iwm_rates); ridx++) {
-        if (iwm_rates[ridx].plcp == IWM_RATE_INVM_PLCP)
-            continue;
-        if (rval == iwm_rates[ridx].rate)
-            break;
-    }
-    
-    return ridx;
 }
 
 void ItlIwm::
@@ -767,7 +785,7 @@ iwm_ack_rates(struct iwm_softc *sc, struct iwm_node *in, int *cck_rates,
     
     if (ni->ni_chan == IEEE80211_CHAN_ANYC ||
         IEEE80211_IS_CHAN_2GHZ(ni->ni_chan)) {
-        for (i = IWM_FIRST_CCK_RATE; i < IWM_FIRST_OFDM_RATE; i++) {
+        for (i = IWL_FIRST_CCK_RATE; i < IWL_FIRST_OFDM_RATE; i++) {
             if ((iwm_ridx2rate(rs, i) & IEEE80211_RATE_BASIC) == 0)
                 continue;
             cck |= (1 << i);
@@ -775,10 +793,10 @@ iwm_ack_rates(struct iwm_softc *sc, struct iwm_node *in, int *cck_rates,
                 lowest_present_cck = i;
         }
     }
-    for (i = IWM_FIRST_OFDM_RATE; i <= IWM_LAST_NON_HT_RATE; i++) {
+    for (i = IWL_FIRST_OFDM_RATE; i <= IWL_LAST_NON_HT_RATE; i++) {
         if ((iwm_ridx2rate(rs, i) & IEEE80211_RATE_BASIC) == 0)
             continue;
-        ofdm |= (1 << (i - IWM_FIRST_OFDM_RATE));
+        ofdm |= (1 << (i - IWL_FIRST_OFDM_RATE));
         if (lowest_present_ofdm == -1 || lowest_present_ofdm > i)
             lowest_present_ofdm = i;
     }
@@ -806,12 +824,12 @@ iwm_ack_rates(struct iwm_softc *sc, struct iwm_node *in, int *cck_rates,
      * lower than all of the basic rates to these bitmaps.
      */
     
-    if (IWM_RATE_24M_INDEX < lowest_present_ofdm)
-        ofdm |= IWM_RATE_BIT_MSK(24) >> IWM_FIRST_OFDM_RATE;
-    if (IWM_RATE_12M_INDEX < lowest_present_ofdm)
-        ofdm |= IWM_RATE_BIT_MSK(12) >> IWM_FIRST_OFDM_RATE;
+    if (IWL_RATE_24M_INDEX < lowest_present_ofdm)
+        ofdm |= IWL_RATE_BIT_MSK(24) >> IWL_FIRST_OFDM_RATE;
+    if (IWL_RATE_12M_INDEX < lowest_present_ofdm)
+        ofdm |= IWL_RATE_BIT_MSK(12) >> IWL_FIRST_OFDM_RATE;
     /* 6M already there or needed so always add */
-    ofdm |= IWM_RATE_BIT_MSK(6) >> IWM_FIRST_OFDM_RATE;
+    ofdm |= IWL_RATE_BIT_MSK(6) >> IWL_FIRST_OFDM_RATE;
     
     /*
      * CCK is a bit more complex with DSSS vs. HR/DSSS vs. ERP.
@@ -826,14 +844,14 @@ iwm_ack_rates(struct iwm_softc *sc, struct iwm_node *in, int *cck_rates,
      * As a consequence, it's not as complicated as it sounds, just add
      * any lower rates to the ACK rate bitmap.
      */
-    if (IWM_RATE_11M_INDEX < lowest_present_cck)
-        cck |= IWM_RATE_BIT_MSK(11) >> IWM_FIRST_CCK_RATE;
-    if (IWM_RATE_5M_INDEX < lowest_present_cck)
-        cck |= IWM_RATE_BIT_MSK(5) >> IWM_FIRST_CCK_RATE;
-    if (IWM_RATE_2M_INDEX < lowest_present_cck)
-        cck |= IWM_RATE_BIT_MSK(2) >> IWM_FIRST_CCK_RATE;
+    if (IWL_RATE_11M_INDEX < lowest_present_cck)
+        cck |= IWL_RATE_BIT_MSK(11) >> IWL_FIRST_CCK_RATE;
+    if (IWL_RATE_5M_INDEX < lowest_present_cck)
+        cck |= IWL_RATE_BIT_MSK(5) >> IWL_FIRST_CCK_RATE;
+    if (IWL_RATE_2M_INDEX < lowest_present_cck)
+        cck |= IWL_RATE_BIT_MSK(2) >> IWL_FIRST_CCK_RATE;
     /* 1M already there or needed so always add */
-    cck |= IWM_RATE_BIT_MSK(1) >> IWM_FIRST_CCK_RATE;
+    cck |= IWL_RATE_BIT_MSK(1) >> IWL_FIRST_CCK_RATE;
     
     *cck_rates = cck;
     *ofdm_rates = ofdm;

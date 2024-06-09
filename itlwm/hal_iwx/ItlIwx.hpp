@@ -192,9 +192,8 @@ public:
 //    static void onLoadFW(OSKextRequestTag requestTag, OSReturn result, const void *resourceData, uint32_t resourceDataLength, void *context);
     
     uint8_t    iwx_lookup_cmd_ver(struct iwx_softc *, uint8_t, uint8_t);
+    uint8_t    iwx_lookup_notif_ver(struct iwx_softc *, uint8_t, uint8_t);
     uint32_t    iwx_lmac_id(struct iwx_softc *, ieee80211_channel *);
-    int    iwx_is_mimo_ht_plcp(uint8_t);
-    int    iwx_is_mimo_mcs(int);
     int    iwx_store_cscheme(struct iwx_softc *, uint8_t *, size_t);
     int    iwx_alloc_fw_monitor_block(struct iwx_softc *, uint8_t, uint8_t);
     int    iwx_alloc_fw_monitor(struct iwx_softc *, uint8_t);
@@ -208,6 +207,7 @@ public:
     int iwx_get_num_sections(const struct iwx_fw_sects *fws, int start);
     int    iwx_init_fw_sec(struct iwx_softc *, const struct iwx_fw_sects *,
             struct iwx_context_info_dram *);
+    void    iwx_fw_version_str(char *, size_t, uint32_t, uint32_t, uint32_t);
     int    iwx_firmware_store_section(struct iwx_softc *, enum iwx_ucode_type,
             uint8_t *, size_t);
     int    iwx_set_default_calib(struct iwx_softc *, const void *);
@@ -291,6 +291,7 @@ public:
     static void    iwx_updateprot(struct ieee80211com *);
     static void    iwx_updateslot(struct ieee80211com *);
     static void    iwx_updateedca(struct ieee80211com *);
+    static void    iwx_updatedtim(struct ieee80211com *);
     void    iwx_init_reorder_buffer(struct iwx_reorder_buffer *, uint16_t,
             uint16_t);
     void    iwx_clear_reorder_buffer(struct iwx_softc *, struct iwx_rxba_data *);
@@ -370,6 +371,7 @@ public:
     int    iwx_tx(struct iwx_softc *, mbuf_t, struct ieee80211_node *, int);
     int    iwx_flush_sta_tids(struct iwx_softc *, int, uint16_t);
     int    iwx_flush_sta(struct iwx_softc *, struct iwx_node *);
+    int    iwx_drain_sta(struct iwx_softc *sc, struct iwx_node *, int);
     int    iwx_beacon_filter_send_cmd(struct iwx_softc *,
             struct iwx_beacon_filter_cmd *);
     int    iwx_update_beacon_abort(struct iwx_softc *, struct iwx_node *, int);
@@ -382,6 +384,7 @@ public:
     int    iwx_add_sta_cmd(struct iwx_softc *, struct iwx_node *, int);
     int    iwx_add_aux_sta(struct iwx_softc *);
     int    iwx_rm_sta_cmd(struct iwx_softc *, struct iwx_node *);
+    int    iwx_rm_sta(struct iwx_softc *, struct iwx_node *);
     uint8_t iwx_umac_scan_fill_channels(struct iwx_softc *sc,
                                 struct iwx_scan_channel_cfg_umac *chan, int n_ssids, int bgscan);
     int iwx_fill_probe_req_v1(struct iwx_softc *sc, struct iwx_scan_probe_req_v1 *preq1);
@@ -397,6 +400,7 @@ public:
     void    iwx_mcc_update(struct iwx_softc *, struct iwx_mcc_chub_notif *);
     uint8_t    iwx_ridx2rate(struct ieee80211_rateset *, int);
     int    iwx_rval2ridx(int);
+    int    iwx_rate2idx(int);
     void    iwx_ack_rates(struct iwx_softc *, struct iwx_node *, int *, int *);
     void    iwx_mac_ctxt_cmd_common(struct iwx_softc *, struct iwx_node *,
             struct iwx_mac_ctx_cmd *, uint32_t);
@@ -416,13 +420,11 @@ public:
     uint16_t iwx_rs_fw_get_config_flags(struct iwx_softc *sc);
     int    iwx_rs_init(struct iwx_softc *, struct iwx_node *, bool update);
     void iwx_rs_update(struct iwx_softc *sc, struct iwx_tlc_update_notif *notif);
-    int    iwx_enable_data_tx_queues(struct iwx_softc *);
+    int    iwx_enable_mgmt_queue(struct iwx_softc *);
     int    iwx_phy_ctxt_update(struct iwx_softc *, struct iwx_phy_ctxt *,
                                struct ieee80211_channel *, uint8_t, uint8_t, uint32_t);
     int    iwx_auth(struct iwx_softc *);
     int    iwx_deauth(struct iwx_softc *);
-    int    iwx_assoc(struct iwx_softc *);
-    int    iwx_disassoc(struct iwx_softc *);
     int    iwx_run(struct iwx_softc *);
     int    iwx_run_stop(struct iwx_softc *);
     static struct ieee80211_node *iwx_node_alloc(struct ieee80211com *);

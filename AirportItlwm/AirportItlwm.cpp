@@ -68,9 +68,8 @@ IOService* AirportItlwm::probe(IOService *provider, SInt32 *score)
     UInt8 msiCap;
     UInt8 msixCap;
     IOPCIDevice* device = OSDynamicCast(IOPCIDevice, provider);
-    if (!device) {
+    if (!device)
         return NULL;
-    }
     if (ItlIwx::iwx_match(device)) {
         isMatch = true;
         fHalService = new ItlIwx;
@@ -85,13 +84,11 @@ IOService* AirportItlwm::probe(IOService *provider, SInt32 *score)
     }
     if (isMatch) {
         device->findPCICapability(PCI_CAP_ID_MSIX, &msixCap);
-        if (msixCap) {
+        if (msixCap)
             pciMsiXClearAndSet(device, msixCap, PCI_MSIX_FLAGS_ENABLE, 0);
-        }
         device->findPCICapability(PCI_CAP_ID_MSI, &msiCap);
-        if (msiCap) {
+        if (msiCap)
             pciMsiSetEnable(device, msiCap, 1);
-        }
         if (!msiCap && !msixCap) {
             XYLog("%s No MSI cap\n", __FUNCTION__);
             fHalService->release();
@@ -103,8 +100,10 @@ IOService* AirportItlwm::probe(IOService *provider, SInt32 *score)
     return NULL;
 }
 
-bool AirportItlwm::configureInterface(IONetworkInterface *netif) {
+bool AirportItlwm::configureInterface(IONetworkInterface *netif)
+{
     IONetworkData *nd;
+    struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     
     if (super::configureInterface(netif) == false) {
         XYLog("super failed\n");
@@ -116,8 +115,8 @@ bool AirportItlwm::configureInterface(IONetworkInterface *netif) {
         XYLog("network statistics buffer unavailable?\n");
         return false;
     }
-    fHalService->get80211Controller()->ic_ac.ac_if.netStat = fpNetStats;
-    fHalService->get80211Controller()->ic_ac.ac_if.iface = OSDynamicCast(IOEthernetInterface, netif);
+    ifp->netStat = fpNetStats;
+    ether_ifattach(ifp, OSDynamicCast(IOEthernetInterface, netif));
     fpNetStats->collisions = 0;
 #ifdef __PRIVATE_SPI__
     netif->configureOutputPullModel(fHalService->getDriverInfo()->getTxQueueSize(), 0, 0, IOEthernetInterface::kOutputPacketSchedulingModelNormal, 0);
@@ -129,9 +128,8 @@ bool AirportItlwm::configureInterface(IONetworkInterface *netif) {
 IONetworkInterface *AirportItlwm::createInterface()
 {
     AirportItlwmInterface *netif = new AirportItlwmInterface;
-    if (!netif) {
+    if (!netif)
         return NULL;
-    }
     if (!netif->init(this, fHalService)) {
         netif->release();
         return NULL;
@@ -248,9 +246,8 @@ void AirportItlwm::setPTK(const u_int8_t *key, size_t key_len) {
             XYLog("setting PTK failed\n");
             return;
         }
-        else {
+        else
             XYLog("setting PTK successfully\n");
-        }
         ni->ni_flags &= ~IEEE80211_NODE_RSN_NEW_PTK;
         ni->ni_flags &= ~IEEE80211_NODE_TXRXPROT;
         ni->ni_flags |= IEEE80211_NODE_RXPROT;
@@ -289,9 +286,8 @@ void AirportItlwm::setGTK(const u_int8_t *gtk, size_t key_len, u_int8_t kid, u_i
                 XYLog("setting GTK failed\n");
                 return;
             }
-            else {
+            else
                 XYLog("setting GTK successfully\n");
-            }
         }
     }
     
@@ -333,9 +329,8 @@ createMediumTables(const IONetworkMedium **primary)
     }
     
     bool result = publishMediumDictionary(mediumDict);
-    if (!result) {
+    if (!result)
         XYLog("Cannot publish medium dictionary!\n");
-    }
 
     mediumDict->release();
     return result;
@@ -433,9 +428,8 @@ bool AirportItlwm::start(IOService *provider)
     _fWorkloop->addEventSource(scanSource);
     scanSource->enable();
     setLinkStatus(kIONetworkLinkValid);
-    if (TAILQ_EMPTY(&fHalService->get80211Controller()->ic_ess)) {
+    if (TAILQ_EMPTY(&fHalService->get80211Controller()->ic_ess))
         fHalService->get80211Controller()->ic_flags |= IEEE80211_F_AUTO_JOIN;
-    }
     registerService();
     fNetIf->registerService();
     return true;
@@ -481,9 +475,8 @@ bool AirportItlwm::initPCIPowerManagment(IOPCIDevice *provider)
                                 &pmPCICapPtr);
     if (pmPCICapPtr) {
         UInt16 pciPMCReg = provider->configRead32( pmPCICapPtr ) >> 16;
-        if (pciPMCReg & kPCIPMCPMESupportFromD3Cold) {
+        if (pciPMCReg & kPCIPMCPMESupportFromD3Cold)
             magicPacketSupported = true;
-        }
         provider->configWrite16((pmPCICapPtr + 4), 0x8000 );
         IOSleep(10);
     }
@@ -515,9 +508,9 @@ void AirportItlwm::stop(IOService *provider)
     disableAdapter(fNetIf);
     setLinkStatus(kIONetworkLinkValid);
     fHalService->detach(pciNub);
+    ether_ifdetach(ifp);
     detachInterface(fNetIf, true);
     OSSafeReleaseNULL(fNetIf);
-    ifp->iface = NULL;
     releaseAll();
 }
 
@@ -535,7 +528,6 @@ setLinkStatus(UInt32 status, const IONetworkMedium * activeMedium, UInt64 speed,
 #ifdef __PRIVATE_SPI__
             fNetIf->startOutputThread();
 #endif
-            ifq_set_oactive(&ifq->if_snd);
             getCommandGate()->runAction(setLinkStateGated, (void *)kIO80211NetworkLinkUp, (void *)0);
             fNetIf->setLinkQualityMetric(100);
         } else if (!(status & kIONetworkLinkNoNetworkChange)) {
@@ -543,9 +535,8 @@ setLinkStatus(UInt32 status, const IONetworkMedium * activeMedium, UInt64 speed,
             fNetIf->stopOutputThread();
             fNetIf->flushOutputQueue();
 #endif
-            ifq->if_snd->lockFlush();
+            ifq_flush(&ifq->if_snd);
             mq_purge(&fHalService->get80211Controller()->ic_mgtq);
-            ifq_clr_oactive(&ifq->if_snd);
             getCommandGate()->runAction(setLinkStateGated, (void *)kIO80211NetworkLinkDown, (void *)fHalService->get80211Controller()->ic_deauth_reason);
         }
     }
@@ -558,6 +549,9 @@ setLinkStateGated(OSObject *target, void *arg0, void *arg1, void *arg2, void *ar
     AirportItlwm *that = OSDynamicCast(AirportItlwm, target);
     IOReturn ret = that->getNetworkInterface()->setLinkState((IO80211LinkState)(uint64_t)arg0, (unsigned int)(uint64_t)arg1);
     if (that->fAWDLInterface) {
+#if __IO80211_TARGET >= __MAC_13_0
+        that->fAWDLInterface->setEnabledBySystem(true);
+#endif
         that->fAWDLInterface->setLinkState((IO80211LinkState)(uint64_t)arg0, (unsigned int)(uint64_t)arg1);
     }
     return ret;
@@ -613,6 +607,10 @@ void AirportItlwm::free()
         IOFree(roamProfile, sizeof(struct apple80211_roam_profile_band_data));
         roamProfile = NULL;
     }
+    if (btcProfile != NULL) {
+        IOFree(btcProfile, sizeof(struct apple80211_btc_profiles_data));
+        btcProfile = NULL;
+    }
     super::free();
 }
 
@@ -621,9 +619,8 @@ IOReturn AirportItlwm::enable(IONetworkInterface *netif)
     XYLog("%s\n", __PRETTY_FUNCTION__);
     super::enable(netif);
     _fCommandGate->enable();
-    if (power_state) {
+    if (power_state)
         enableAdapter(netif);
-    }
     return kIOReturnSuccess;
 }
 
@@ -652,9 +649,9 @@ void AirportItlwm::disableAdapter(IONetworkInterface *netif)
 
 IOReturn AirportItlwm::getHardwareAddress(IOEthernetAddress *addrP)
 {
-    if (IEEE80211_ADDR_EQ(etheranyaddr, fHalService->get80211Controller()->ic_myaddr)) {
+    if (IEEE80211_ADDR_EQ(etheranyaddr, fHalService->get80211Controller()->ic_myaddr))
         return kIOReturnError;
-    } else {
+    else {
         IEEE80211_ADDR_COPY(addrP, fHalService->get80211Controller()->ic_myaddr);
         return kIOReturnSuccess;
     }
@@ -683,14 +680,12 @@ IOReturn AirportItlwm::outputStart(IONetworkInterface *interface, IOOptionBits o
 {
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     mbuf_t m = NULL;
-    if (!ifq_is_oactive(&ifp->if_snd)) {
+    if (ifq_is_oactive(&ifp->if_snd))
         return kIOReturnNoResources;
-    }
     while (kIOReturnSuccess == interface->dequeueOutputPackets(1, &m)) {
-        outputPacket(m, NULL);
-        if (!ifq_is_oactive(&ifp->if_snd)) {
+        if (outputPacket(m, NULL)!= kIOReturnOutputSuccess ||
+            ifq_is_oactive(&ifp->if_snd))
             return kIOReturnNoResources;
-        }
     }
     return kIOReturnSuccess;
 }
@@ -702,10 +697,9 @@ UInt32 AirportItlwm::outputPacket(mbuf_t m, void *param)
     IOReturn ret = kIOReturnOutputSuccess;
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     
-    if (fHalService->get80211Controller()->ic_state != IEEE80211_S_RUN || ifp->if_snd == NULL) {
-        if (m && mbuf_type(m) != MBUF_TYPE_FREE) {
+    if (fHalService->get80211Controller()->ic_state != IEEE80211_S_RUN || ifp->if_snd.queue == NULL) {
+        if (m && mbuf_type(m) != MBUF_TYPE_FREE)
             freePacket(m);
-        }
         return kIOReturnOutputDropped;
     }
     if (m == NULL) {
@@ -724,7 +718,7 @@ UInt32 AirportItlwm::outputPacket(mbuf_t m, void *param)
         ifp->netStat->outputErrors++;
         ret = kIOReturnOutputDropped;
     }
-    if (!ifp->if_snd->lockEnqueue(m)) {
+    if (!ifp->if_snd.queue->lockEnqueue(m)) {
         freePacket(m);
         ret = kIOReturnOutputDropped;
     }
@@ -771,13 +765,12 @@ useAppleRSNSupplicant(IO80211Interface *interface)
 IOReturn AirportItlwm::getPacketFilters(const OSSymbol *group, UInt32 *filters) const
 {
     IOReturn    rtn = kIOReturnSuccess;
-    if (group == gIOEthernetWakeOnLANFilterGroup && magicPacketSupported) {
+    if (group == gIOEthernetWakeOnLANFilterGroup && magicPacketSupported)
         *filters = kIOEthernetWakeOnMagicPacket;
-    } else if (group == gIONetworkFilterGroup) {
+    else if (group == gIONetworkFilterGroup)
         *filters = kIOPacketFilterMulticast | kIOPacketFilterPromiscuous;
-    } else {
+    else
         rtn = IOEthernetController::getPacketFilters(group, filters);
-    }
     return rtn;
 }
 
@@ -825,25 +818,22 @@ IOReturn AirportItlwm::setPowerState(unsigned long powerStateOrdinal, IOService 
 {
     IOReturn result = IOPMAckImplied;
     
-    if (pmPowerState == powerStateOrdinal) {
+    if (pmPowerState == powerStateOrdinal)
         return result;
-    }
     switch (powerStateOrdinal) {
         case kPowerStateOff:
             if (powerOffThreadCall) {
                 retain();
-                if (thread_call_enter(powerOffThreadCall)) {
+                if (thread_call_enter(powerOffThreadCall))
                     release();
-                }
                 result = 5000000;
             }
             break;
         case kPowerStateOn:
             if (powerOnThreadCall) {
                 retain();
-                if (thread_call_enter(powerOnThreadCall)) {
+                if (thread_call_enter(powerOnThreadCall))
                     release();
-                }
                 result = 5000000;
             }
             break;
@@ -953,9 +943,8 @@ performCountryCodeOperation(IO80211Interface *interface, IO80211CountryCodeOp op
 SInt32 AirportItlwm::
 stopDMA()
 {
-    if (fNetIf) {
+    if (fNetIf)
         disable(fNetIf);
-    }
     return 0;
 }
 
@@ -990,6 +979,9 @@ enableVirtualInterface(IO80211VirtualInterface *interface)
     XYLog("%s interface=%s role=%d\n", __FUNCTION__, interface->getBSDName(), interface->getInterfaceRole());
     SInt32 ret = super::enableVirtualInterface(interface);
     if (!ret) {
+#if __IO80211_TARGET >= __MAC_13_0
+        interface->setEnabledBySystem(true);
+#endif
         interface->setLinkState(kIO80211NetworkLinkUp, 0);
         interface->postMessage(APPLE80211_M_LINK_CHANGED);
         return kIOReturnSuccess;
@@ -1013,14 +1005,13 @@ disableVirtualInterface(IO80211VirtualInterface *interface)
 IO80211VirtualInterface *AirportItlwm::
 createVirtualInterface(ether_addr *ether, UInt role)
 {
-    if (role - 1 > 3) {
+    if (role - 1 > 3)
         return super::createVirtualInterface(ether, role);
-    }
     IO80211VirtualInterface *inf = new IO80211VirtualInterface;
     if (inf) {
-        if (inf->init(this, ether, role, role == APPLE80211_VIF_AWDL ? "awdl" : "p2p")) {
+        if (inf->init(this, ether, role, role == APPLE80211_VIF_AWDL ? "awdl" : "p2p"))
             XYLog("%s role=%d succeed\n", __FUNCTION__, role);
-        } else {
+        else {
             inf->release();
             return NULL;
         }
@@ -1032,12 +1023,10 @@ int AirportItlwm::
 bpfOutputPacket(OSObject *object, UInt dltType, mbuf_t m)
 {
     XYLog("%s dltType=%d\n", __FUNCTION__, dltType);
-    if (dltType == DLT_IEEE802_11_RADIO || dltType == DLT_IEEE802_11) {
+    if (dltType == DLT_IEEE802_11_RADIO || dltType == DLT_IEEE802_11)
         return bpfOutput80211Radio(object, m);
-    }
-    if (dltType == DLT_RAW) {
+    if (dltType == DLT_RAW)
         return outputActionFrame(object, m);
-    }
     mbuf_freem(m);
     return 1;
 }
@@ -1047,9 +1036,8 @@ requestPacketTx(void *object, UInt )
 {
     UInt32 ret;
     struct TxPacketRequest request;
-    if (object == NULL) {
+    if (object == NULL)
         return;
-    }
     IO80211VirtualInterface *interface = OSDynamicCast(IO80211VirtualInterface, (OSObject *)object);
     if (interface) {
         memset(&request, 0, sizeof(request));

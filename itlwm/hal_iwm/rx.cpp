@@ -354,6 +354,7 @@ iwm_rx_mpdu(struct iwm_softc *sc, mbuf_t m, void *pktdata,
 {
     struct ieee80211com *ic = &sc->sc_ic;
     struct ieee80211_rxinfo rxi;
+    struct ieee80211_rx_status rx_status;
     struct iwm_rx_phy_info *phy_info;
     struct iwm_rx_mpdu_res_start *rx_res;
     int device_timestamp;
@@ -363,6 +364,7 @@ iwm_rx_mpdu(struct iwm_softc *sc, mbuf_t m, void *pktdata,
     int rssi, chanidx, rate_n_flags;
     
     memset(&rxi, 0, sizeof(rxi));
+    memset(&rx_status, 0, sizeof(struct ieee80211_rx_status));
     
     phy_info = &sc->sc_last_phy_info;
     rx_res = (struct iwm_rx_mpdu_res_start *)pktdata;
@@ -415,12 +417,14 @@ iwm_rx_mpdu(struct iwm_softc *sc, mbuf_t m, void *pktdata,
     phy_flags = letoh16(phy_info->phy_flags);
     rate_n_flags = le32toh(phy_info->rate_n_flags);
 
-    rssi = iwm_get_signal_strength(sc, phy_info);
+    rssi = iwm_get_signal_strength(sc, &rx_status, phy_info);
+    rs_update_last_rssi(sc, &rx_status);
     rssi = (0 - IWM_MIN_DBM) + rssi;    /* normalize */
     rssi = MIN(rssi, ic->ic_max_rssi);    /* clip to max. 100% */
 
     rxi.rxi_rssi = rssi;
     rxi.rxi_tstamp = device_timestamp;
+    rxi.rxi_chan = chanidx;
     
     iwm_rx_frame(sc, m, chanidx, rx_pkt_status,
                  (phy_flags & IWM_PHY_INFO_FLAG_SHPREAMBLE),
@@ -604,6 +608,8 @@ iwm_oldsn_workaround(struct iwm_softc *sc, struct ieee80211_node *ni, int tid,
     
     /* if limit is reached, send del BA and reset state */
     if (buffer->consec_oldsn_drops == IWM_AMPDU_CONSEC_DROPS_DELBA) {
+        XYLog("reached %d old SN frames, stopping BA session on TID %d\n",
+              IWM_AMPDU_CONSEC_DROPS_DELBA, tid);
         ieee80211_delba_request(ic, ni, IEEE80211_REASON_UNSPECIFIED,
                                 0, tid);
         buffer->consec_oldsn_prev_drop = 0;
@@ -820,6 +826,7 @@ iwm_rx_mpdu_mq(struct iwm_softc *sc, mbuf_t m, void *pktdata,
 {
     struct ieee80211com *ic = &sc->sc_ic;
     struct ieee80211_rxinfo rxi;
+    struct ieee80211_rx_status rx_status;
     struct iwm_rx_mpdu_desc *desc;
     uint32_t len, hdrlen, rate_n_flags, device_timestamp;
     int rssi;
@@ -827,6 +834,7 @@ iwm_rx_mpdu_mq(struct iwm_softc *sc, mbuf_t m, void *pktdata,
     uint16_t phy_info;
     
     memset(&rxi, 0, sizeof(rxi));
+    memset(&rx_status, 0, sizeof(struct ieee80211_rx_status));
     
     desc = (struct iwm_rx_mpdu_desc *)pktdata;
     
@@ -947,12 +955,14 @@ iwm_rx_mpdu_mq(struct iwm_softc *sc, mbuf_t m, void *pktdata,
     chanidx = desc->v1.channel;
     device_timestamp = desc->v1.gp2_on_air_rise;
     
-    rssi = iwm_rxmq_get_signal_strength(sc, desc);
+    rssi = iwm_rxmq_get_signal_strength(sc, &rx_status, rate_n_flags, desc);
+    rs_update_last_rssi(sc, &rx_status);
     rssi = (0 - IWM_MIN_DBM) + rssi;    /* normalize */
     rssi = MIN(rssi, ic->ic_max_rssi);    /* clip to max. 100% */
     
     rxi.rxi_rssi = rssi;
     rxi.rxi_tstamp = le64toh(desc->v1.tsf_on_air_rise);
+    rxi.rxi_chan = chanidx;
     
     if (iwm_rx_reorder(sc, m, chanidx, desc,
                        (phy_info & IWM_RX_MPDU_PHY_SHORT_PREAMBLE),
@@ -1008,8 +1018,7 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
             break;
         
         len = sizeof(pkt->len_n_flags) + iwm_rx_packet_len(pkt);
-        if (len < sizeof(pkt->hdr) ||
-            len > (IWM_RBUF_SIZE - offset - minsz))
+        if (len < minsz || len > (IWM_RBUF_SIZE - offset))
             break;
         
         if (code == IWM_REPLY_RX_MPDU_CMD && ++nmpdu == 1) {
@@ -1160,22 +1169,28 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
             case IWM_MCC_CHUB_UPDATE_CMD: {
                 struct iwm_mcc_chub_notif *notif;
                 SYNC_RESP_STRUCT(notif, pkt, struct iwm_mcc_chub_notif *);
-                
-                sc->sc_fw_mcc[0] = (notif->mcc & 0xff00) >> 8;
-                sc->sc_fw_mcc[1] = notif->mcc & 0xff;
-                sc->sc_fw_mcc[2] = '\0';
-
-                if (sc->sc_fw_mcc_int != notif->mcc && sc->sc_ic.ic_event_handler) {
-                    (*sc->sc_ic.ic_event_handler)(&sc->sc_ic, IEEE80211_EVT_COUNTRY_CODE_UPDATE, NULL);
-                }
-
-                sc->sc_fw_mcc_int = notif->mcc;
+                iwm_mcc_update(sc, notif);
+                break;
             }
                 
             case IWM_DTS_MEASUREMENT_NOTIFICATION:
             case IWM_WIDE_ID(IWM_PHY_OPS_GROUP,
                              IWM_DTS_MEASUREMENT_NOTIF_WIDE):
+            case IWM_WIDE_ID(IWM_PHY_OPS_GROUP,
+                             IWM_TEMP_REPORTING_THRESHOLDS_CMD):
                 break;
+
+            case IWM_WIDE_ID(IWM_PHY_OPS_GROUP,
+                             IWM_CT_KILL_NOTIFICATION): {
+                struct iwm_ct_kill_notif *notif;
+                SYNC_RESP_STRUCT(notif, pkt, struct iwm_ct_kill_notif *);
+                XYLog("%s: device at critical temperature (%u degC), "
+                       "stopping device\n",
+                       DEVNAME(sc), le16toh(notif->temperature));
+                sc->sc_flags |= IWM_FLAG_HW_ERR;
+                task_add(systq, &sc->init_task);
+                break;
+            }
                 
             case IWM_ADD_STA_KEY:
             case IWM_PHY_CONFIGURATION_CMD:
@@ -1310,6 +1325,9 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
             }
                 
             case IWM_WIDE_ID(IWM_DATA_PATH_GROUP, IWM_DQA_ENABLE_CMD):
+                break;
+
+            case IWM_WIDE_ID(IWM_SYSTEM_GROUP, IWM_SOC_CONFIGURATION_CMD):
                 break;
                 
             default:

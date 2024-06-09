@@ -124,6 +124,8 @@
 #include <IOKit/network/IOMbufMemoryCursor.h>
 #include <IOKit/IODMACommand.h>
 
+#include "rs.h"
+
 struct iwm_rx_radiotap_header {
     struct ieee80211_radiotap_header wr_ihdr;
     uint64_t    wr_tsft;
@@ -285,11 +287,9 @@ struct iwm_tx_data {
     int txmcs;
     int txrate;
     int totlen;
-    int data_type;
+    uint16_t fc;
     
-    /* A-MPDU subframes */
-    int ampdu_txmcs;
-    int ampdu_nframes;
+    struct ieee80211_tx_info info;
 };
 
 struct iwm_tx_ring {
@@ -319,7 +319,6 @@ struct iwm_rx_ring {
     struct iwm_dma_info    free_desc_dma;
     struct iwm_dma_info    stat_dma;
     struct iwm_dma_info    used_desc_dma;
-    struct iwm_dma_info    buf_dma;
     void            *desc;
     struct iwm_rb_status    *stat;
     struct iwm_rx_data    data[IWM_RX_MQ_RING_COUNT];
@@ -425,7 +424,7 @@ struct iwm_reorder_buffer {
     unsigned int consec_oldsn_drops;
     uint32_t consec_oldsn_ampdu_gp2;
     unsigned int consec_oldsn_prev_drop;
-#define IWM_AMPDU_CONSEC_DROPS_DELBA   10
+#define IWM_AMPDU_CONSEC_DROPS_DELBA   20
 };
 
 /**
@@ -490,6 +489,17 @@ struct iwm_rxq_dup_data {
 
 struct iwm_tx_ba {
    struct iwm_node *    wn;
+    uint32_t rate_n_flags;
+    uint8_t lq_color;
+    uint16_t tx_time;
+    uint32_t tx_count_last;
+    uint32_t tx_count;
+    unsigned long tpt_meas_start;
+};
+
+struct iwm_ba_task_data {
+    uint32_t        start_tidmask;
+    uint32_t        stop_tidmask;
 };
 
 struct iwm_softc {
@@ -511,16 +521,8 @@ struct iwm_softc {
 
 	/* Task for firmware BlockAck setup/teardown and its arguments. */
 	struct task		ba_task;
-	int			ba_tx_start;
-	int			ba_tx_tid;
-	uint16_t		ba_tx_ssn;
-    uint16_t        ba_tx_winsize;
-    int         ba_tx;
-    uint32_t                ba_start_tidmask;
-    uint32_t                ba_stop_tidmask;
-    uint16_t                ba_ssn[IWM_MAX_TID_COUNT];
-    uint16_t                ba_winsize[IWM_MAX_TID_COUNT];
-    int                     ba_timeout_val[IWM_MAX_TID_COUNT];
+	struct iwm_ba_task_data    ba_rx;
+    struct iwm_ba_task_data    ba_tx;
 
     /* Task for ERP/HT prot/slot-time/EDCA updates. */
     struct task		mac_ctxt_task;
@@ -546,6 +548,7 @@ struct iwm_softc {
     int cmdqid;
     
     uint8_t sc_mgmt_last_antenna_idx;
+    uint8_t sc_tx_ant;
 
 	int sc_sf_state;
 
@@ -581,6 +584,9 @@ struct iwm_softc {
 	int sc_capa_n_scan_channels;
 	uint8_t sc_ucode_api[howmany(IWM_NUM_UCODE_TLV_API, NBBY)];
     uint8_t sc_enabled_capa[howmany(IWM_NUM_UCODE_TLV_CAPA, NBBY)];
+#define IWM_MAX_FW_CMD_VERSIONS    64
+    struct iwm_fw_cmd_version cmd_versions[IWM_MAX_FW_CMD_VERSIONS];
+    int n_cmd_versions;
 	char sc_fw_mcc[3];
     uint16_t sc_fw_mcc_int;
 
@@ -619,7 +625,7 @@ struct iwm_softc {
 
 	struct iwm_bf_data sc_bf;
 
-	int sc_tx_timer;
+	int sc_tx_timer[IWM_MAX_QUEUES];
 	int sc_rx_ba_sessions;
 
 	int sc_scan_last_antenna;
@@ -640,7 +646,6 @@ struct iwm_softc {
 #define IWM_MAX_BAID   32
     struct iwm_rxba_data sc_rxba_data[IWM_MAX_BAID];
     
-    int first_agg_txq;
     int agg_queue_mask;
     int agg_tid_disable;
     struct iwm_tx_ba sc_tx_ba[IEEE80211_NUM_TID];
@@ -657,9 +662,13 @@ struct iwm_softc {
     int sc_ltr_enabled;
     enum iwm_nvm_type nvm_type;
     int support_ldpc;
+    uint8_t non_shared_ant;
     
     int sc_mqrx_supported;
     int sc_integrated;
+    int sc_ltr_delay;
+    int sc_xtal_latency;
+    int sc_low_latency_xtal;
     
     /*
      * Paging parameters - All of the parameters should be set by the
@@ -686,17 +695,22 @@ struct iwm_softc {
 #define sc_txtap	sc_txtapu.th
 	int			sc_txtap_len;
 #endif
+    union {
+        struct iwl_lq_sta_rs_fw rs_fw;
+        struct iwl_lq_sta rs_drv;
+    } lq_sta;
+    int tx_protection;
 };
 
 struct iwm_node {
     struct ieee80211_node in_ni;
     struct iwm_phy_ctxt *in_phyctxt;
+    uint8_t in_macaddr[ETHER_ADDR_LEN];
 
     uint16_t in_id;
     uint16_t in_color;
 
     struct ieee80211_amrr_node in_amn;
-    struct ieee80211_ra_node in_rn;
     int lq_rate_mismatch;
     uint32_t next_ampdu_id;
     

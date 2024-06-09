@@ -15,7 +15,6 @@
 #include "itlhdr.h"
 #include <linux/kernel.h>
 
-#include "itlwm_interface.hpp"
 #include <IOKit/network/IOEthernetController.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/network/IOGatedOutputQueue.h>
@@ -64,7 +63,6 @@ public:
     virtual IOWorkLoop* getWorkLoop() const override;
     virtual const OSString * newVendorString() const override;
     virtual const OSString * newModelString() const override;
-    virtual IONetworkInterface * createInterface() override;
     virtual bool setLinkStatus(
                                UInt32                  status,
                                const IONetworkMedium * activeMedium = 0,
@@ -103,7 +101,7 @@ public:
     IOTimerEventSource *watchdogTimer;
     IOPCIDevice *pciNub;
     IONetworkStats *fpNetStats;
-    itlwm_interface *fNetIf;
+    IOEthernetInterface *fNetIf;
     IOWorkLoop *fWatchdogWorkLoop;
     ItlHalService *fHalService;
     
@@ -115,4 +113,11 @@ public:
     UInt8 pmPCICapPtr;
     bool magicPacketEnabled;
     bool magicPacketSupported;
+    
+    //connect params
+    struct ieee80211_wpaparams wpa;
+    struct ieee80211_wpapsk psk;
+    struct ieee80211_nwkey nwkey;
+    struct ieee80211_join join;
+    struct ieee80211_nwid nwid;
 };

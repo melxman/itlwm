@@ -367,7 +367,6 @@ struct iwx_rx_ring {
 	struct iwx_dma_info	free_desc_dma;
 	struct iwx_dma_info	stat_dma;
 	struct iwx_dma_info	used_desc_dma;
-	struct iwx_dma_info	buf_dma;
 	void			*desc;
 	void	        *stat;
 	struct iwx_rx_data	data[IWX_RX_MQ_RING_COUNT];
@@ -384,6 +383,7 @@ struct iwx_rx_ring {
 #define IWX_FLAG_HW_ERR		0x80	/* hardware error occurred */
 #define IWX_FLAG_SHUTDOWN	0x100	/* shutting down; new tasks forbidden */
 #define IWX_FLAG_BGSCAN		0x200	/* background scan in progress */
+#define IWX_FLAG_TXFLUSH    0x400   /* Tx queue flushing in progress */
 
 struct iwx_ucode_status {
 	uint32_t uc_lmac_error_event_table[2];
@@ -519,7 +519,7 @@ struct iwx_reorder_buffer {
     unsigned int consec_oldsn_drops;
     uint32_t consec_oldsn_ampdu_gp2;
     unsigned int consec_oldsn_prev_drop;
-#define IWX_AMPDU_CONSEC_DROPS_DELBA    10
+#define IWX_AMPDU_CONSEC_DROPS_DELBA    20
 };
 
 /**
@@ -581,6 +581,11 @@ struct iwx_rxq_dup_data {
     uint8_t last_sub_frame[IWX_MAX_TID_COUNT + 1];
 };
 
+struct iwx_ba_task_data {
+    uint32_t        start_tidmask;
+    uint32_t        stop_tidmask;
+};
+
 struct iwx_softc {
 	struct device sc_dev;
 	struct ieee80211com sc_ic;
@@ -596,17 +601,9 @@ struct iwx_softc {
 
 	/* Task for firmware BlockAck setup/teardown and its arguments. */
 	struct task	ba_task;
-	int			ba_tx_start;
-	int			ba_tx_tid;
-    int         ba_tx;
-	uint16_t    ba_tx_ssn;
-	uint16_t	ba_tx_winsize;
     
-    uint32_t        ba_start_tidmask;
-    uint32_t        ba_stop_tidmask;
-    uint16_t        ba_ssn[IWX_MAX_TID_COUNT];
-    uint16_t        ba_winsize[IWX_MAX_TID_COUNT];
-    int            ba_timeout_val[IWX_MAX_TID_COUNT];
+    struct iwx_ba_task_data    ba_rx;
+    struct iwx_ba_task_data    ba_tx;
     
     struct iwx_tid_data sc_tid_data[IWX_MAX_TID_COUNT + 1];//per tid data + mgmt. Look at %iwx_tid_data.
 
@@ -711,13 +708,12 @@ struct iwx_softc {
 
 	int sc_fixed_ridx;
     
-    uint8_t sc_tx_ant; /* for fixed mcs/rate using */
     uint8_t sc_mgmt_last_antenna_idx; /* for MGMT frames using*/
 
 	int sc_staid;
 	int sc_nodecolor;
 
-	uint8_t *sc_cmd_resp_pkt[IWX_TFD_QUEUE_SIZE_MAX_GEN3];
+	uint8_t *sc_cmd_resp_pkt[IWX_TFD_QUEUE_SIZE_MAX_GEN3];	
 	size_t sc_cmd_resp_len[IWX_TFD_QUEUE_SIZE_MAX_GEN3];
 	int sc_nic_locks;
 
@@ -769,6 +765,7 @@ struct iwx_softc {
 struct iwx_node {
 	struct ieee80211_node in_ni;
 	struct iwx_phy_ctxt *in_phyctxt;
+    uint8_t in_macaddr[ETHER_ADDR_LEN];
 
 	uint16_t in_id;
 	uint16_t in_color;

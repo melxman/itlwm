@@ -149,8 +149,8 @@ sSTA_INFO(OSObject* target, void* data, bool isSet)
     }
     st->rssi = -(0 - IWM_MIN_DBM - ic_bss->ni_rssi);
     st->noise = that->fDriver->fHalService->getDriverInfo()->getBSSNoise();
+    sgi = ieee80211_node_supports_sgi(ic_bss);
     if (ic->ic_curmode == IEEE80211_MODE_11AC) {
-        sgi = (ieee80211_node_supports_vht_sgi80(ic_bss) || ieee80211_node_supports_vht_sgi160(ic_bss));
         if (sgi) {
             index += 1;
         }
@@ -175,7 +175,6 @@ sSTA_INFO(OSObject* target, void* data, bool isSet)
         st->rate = rs->rates[ic_bss->ni_txmcs % rs->nrates] / 2;
     } else if (ic->ic_curmode == IEEE80211_MODE_11N) {
         int is_40mhz = ic_bss->ni_chw == IEEE80211_CHAN_WIDTH_40;
-        sgi = ((!is_40mhz && ieee80211_node_supports_ht_sgi20(ic_bss)) || (is_40mhz && ieee80211_node_supports_ht_sgi40(ic_bss)));
         if (sgi) {
             index += 1;
         }
@@ -334,6 +333,8 @@ sDISASSOCIATE(OSObject* target, void* data, bool isSet)
     ItlNetworkUserClient *that = OSDynamicCast(ItlNetworkUserClient, target);
     struct ioctl_disassociate *dis = (struct ioctl_disassociate *)data;
     struct ieee80211com *ic = that->fDriver->fHalService->get80211Controller();
+    if (ic->ic_state > IEEE80211_S_AUTH && ic->ic_bss != NULL)
+        IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH, IEEE80211_REASON_AUTH_LEAVE);
     ieee80211_del_ess(ic, (char *)dis->ssid, strlen((char *)dis->ssid), 0);
     ieee80211_deselect_ess(ic);
     if (TAILQ_EMPTY(&ic->ic_ess)) {

@@ -387,12 +387,12 @@ struct apple80211_virt_if_create_data {
     uint8_t     mac[APPLE80211_ADDR_LEN];
     uint16_t    unk1;
     uint32_t    role;
-    uint8_t     bsd_name[15];
+    uint8_t     bsd_name[IFNAMSIZ];
 } __attribute__((packed));
 
 struct apple80211_virt_if_delete_data {
     uint32_t    version;
-    uint8_t     bsd_name[15];
+    uint8_t     bsd_name[IFNAMSIZ];
 } __attribute__((packed));
 
 struct apple80211_ht_capability {
@@ -430,11 +430,19 @@ struct apple80211_bssid_data
     struct ether_addr    bssid;
 };
 
+#if __IO80211_TARGET >= __MAC_14_0
+struct apple80211_capability_data
+{
+    u_int32_t    version;
+    u_int8_t     capabilities[14];
+};
+#else
 struct apple80211_capability_data
 {
     u_int32_t    version;
     u_int8_t     capabilities[11];
 };
+#endif
 
 struct apple80211_state_data
 {
@@ -722,7 +730,11 @@ struct apple80211_ap_ie_data
 {
     u_int32_t    version;
     u_int32_t    len;
+#if __IO80211_TARGET < __MAC_13_0
     u_int8_t     *ie_data;
+#else
+    u_int8_t     ie_data[APPLE80211_NETWORK_DATA_MAX_IE_LEN];
+#endif
 };
 
 struct apple80211_stats_data
@@ -921,8 +933,26 @@ struct apple80211_channels_info {
     uint32_t    version;
     uint32_t    unk1;
     uint16_t    num_chan_specs;
-    struct apple80211_awdl_channel channels[APPLE80211_MAX_CHANNELS];
+    uint16_t    chan_spec[APPLE80211_MAX_CHANNELS];
+    uint8_t     chan_num[APPLE80211_MAX_CHANNELS];
+    uint8_t     indoor_restric[APPLE80211_MAX_CHANNELS];
+    uint8_t     radar_dfs[APPLE80211_MAX_CHANNELS];
+    uint8_t     passive[APPLE80211_MAX_CHANNELS];
+    uint8_t     support_40Mhz[APPLE80211_MAX_CHANNELS];
+    uint8_t     support_80Mhz[APPLE80211_MAX_CHANNELS];
+    uint8_t     z[APPLE80211_MAX_CHANNELS];
+    uint8_t     pad[386];
+    uint32_t    per_chan[APPLE80211_MAX_CHANNELS];
+    uint32_t    chan_bitmap[APPLE80211_MAX_CHANNELS];
 } __attribute__((packed));
+
+static_assert(__offsetof(struct apple80211_channels_info, chan_num) == 0x10A, "invalid offset");   //wf_chspec_ctlchan
+static_assert(__offsetof(struct apple80211_channels_info, indoor_restric) == 0x18A, "invalid offset"); //wlc_restricted_chanspec
+static_assert(__offsetof(struct apple80211_channels_info, radar_dfs) == 0x20A, "invalid offset");  //wlc_radar_chanspec
+static_assert(__offsetof(struct apple80211_channels_info, passive) == 0x28A, "invalid offset");    //wlc_quiet_chanspec
+static_assert(__offsetof(struct apple80211_channels_info, support_40Mhz) == 0x30A, "invalid offset");
+static_assert(__offsetof(struct apple80211_channels_info, support_80Mhz) == 0x38A, "invalid offset");
+static_assert(__offsetof(struct apple80211_channels_info, per_chan) == 0x60C, "invalid offset");
 
 struct apple80211_peer_cache_maximum_size {
     uint32_t    version;
@@ -1336,6 +1366,40 @@ struct apple80211_sta_roam_data {
     uint8_t     taget_channel;
     uint8_t     target_bssid[APPLE80211_ADDR_LEN];
 } __attribute__((packed));
+
+struct apple80211_btc_profiles_data {
+    uint32_t    version;
+    uint32_t    profile_cnt;
+    uint8_t     profiles[141][4];
+} __attribute__((packed));
+
+struct apple80211_btc_config_data {
+    uint32_t version;
+    uint32_t enable_2G;
+    uint32_t profile_2g;
+    uint32_t enable_5G;
+    uint32_t profile_5G;
+} __attribute__((packed));
+
+struct apple80211_btc_mode_data {
+    uint32_t    version;
+    uint32_t    btc_mode;
+} __attribute__((packed));
+
+struct apple80211_btc_options_data {
+    uint32_t    version;
+    uint32_t    btc_options;
+} __attribute__((packed));
+
+struct apple80211_driver_available_data {
+    uint64_t event;
+    uint64_t avaliable;
+    uint32_t reason;
+    uint32_t sub_reason;
+    char pad[160];
+} __attribute__((packed));
+
+static_assert(sizeof(struct apple80211_driver_available_data) == 0xB8, "invalid struct apple80211_driver_available_data");
 
 #endif // _APPLE80211_IOCTL_H_
 

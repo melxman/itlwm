@@ -334,6 +334,12 @@ const struct ieee80211_edca_ac_params
 		[EDCA_AC_VI] = { 3,  4, 2,  94 },
 		[EDCA_AC_VO] = { 2,  3, 2,  47 }
 	},
+    [IEEE80211_MODE_11AC] = {
+        [EDCA_AC_BK] = { 4, 10, 7,   0 },
+        [EDCA_AC_BE] = { 4, 10, 3,   0 },
+        [EDCA_AC_VI] = { 3,  4, 2,  94 },
+        [EDCA_AC_VO] = { 2,  3, 2,  47 }
+    },
 };
 
 #ifndef IEEE80211_STA_ONLY
@@ -363,6 +369,12 @@ const struct ieee80211_edca_ac_params
 		[EDCA_AC_VI] = { 3,  4, 1,  94 },
 		[EDCA_AC_VO] = { 2,  3, 1,  47 }
 	},
+    [IEEE80211_MODE_11AC] = {
+        [EDCA_AC_BK] = { 4, 10, 7,   0 },
+        [EDCA_AC_BE] = { 4,  6, 3,   0 },
+        [EDCA_AC_VI] = { 3,  4, 1,  94 },
+        [EDCA_AC_VO] = { 2,  3, 1,  47 }
+    },
 };
 #endif	/* IEEE80211_STA_ONLY */
 
@@ -625,14 +637,9 @@ fallback:
         if (ba->ba_state != IEEE80211_BA_AGREED) {
             hdrlen = sizeof(struct ieee80211_frame);
             addqos = 0;
-            if (ieee80211_can_use_ampdu(ic, ni)) {
+            if ((ic->ic_caps & IEEE80211_C_TX_AMPDU_SETUP_IN_RS) == 0 &&
+                ieee80211_can_use_ampdu(ic, ni))
                 ieee80211_node_trigger_addba_req(ni, tid);
-                if (ic->ic_caps & IEEE80211_C_TX_AMPDU_SETUP_IN_HW) {
-                    if (ic->ic_ampdu_tx_start && ba->ba_state == IEEE80211_BA_INIT) {
-                        (*ic->ic_ampdu_tx_start)(ic, ni, tid);
-                    }
-                }
-            }
         } else {
             hdrlen = sizeof(struct ieee80211_qosframe);
             addqos = 1;
@@ -1593,7 +1600,7 @@ ieee80211_get_assoc_req(struct ieee80211com *ic, struct ieee80211_node *ni,
 		frm = ieee80211_add_xrates(frm, rs);
 	if ((ic->ic_flags & IEEE80211_F_RSNON) &&
 		(ni->ni_rsnprotos & IEEE80211_PROTO_RSN)) {
-#if (defined AIRPORT) && (defined USE_APPLE_SUPPLICANT)
+#ifdef USE_APPLE_SUPPLICANT
 		if (ic->ic_rsn_ie_override[1] > 0) {
 			memcpy(frm, ic->ic_rsn_ie_override, 2 + ic->ic_rsn_ie_override[1]);
 			frm += 2 + ic->ic_rsn_ie_override[1];
@@ -1606,7 +1613,7 @@ ieee80211_get_assoc_req(struct ieee80211com *ic, struct ieee80211_node *ni,
 		frm = ieee80211_add_qos_capability(frm, ic);
 	if ((ic->ic_flags & IEEE80211_F_RSNON) &&
 		(ni->ni_rsnprotos & IEEE80211_PROTO_WPA)) {
-#if (defined AIRPORT) && (defined USE_APPLE_SUPPLICANT)
+#ifdef USE_APPLE_SUPPLICANT
 		if (ic->ic_rsn_ie_override[1] > 0) {
 			memcpy(frm, ic->ic_rsn_ie_override, 2 + ic->ic_rsn_ie_override[1]);
 			frm += 2 + ic->ic_rsn_ie_override[1];

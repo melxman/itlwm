@@ -12,9 +12,8 @@
 SInt32 AirportItlwm::
 apple80211VirtualRequest(UInt request_type, int request_number, IO80211VirtualInterface *interface, void *data)
 {
-    if (request_type != SIOCGA80211 && request_type != SIOCSA80211) {
+    if (request_type != SIOCGA80211 && request_type != SIOCSA80211)
         return kIOReturnError;
-    }
     IOReturn ret = kIOReturnError;
     
     switch (request_number) {
@@ -81,9 +80,9 @@ apple80211VirtualRequest(UInt request_type, int request_number, IO80211VirtualIn
         case APPLE80211_IOC_AWDL_BSSID:
             IOCTL(request_type, AWDL_BSSID, apple80211_awdl_bssid);
             break;
-//        case APPLE80211_IOC_CHANNELS_INFO:
-//            IOCTL_GET(request_type, CHANNELS_INFO, apple80211_channels_info);
-//            break;
+        case APPLE80211_IOC_CHANNELS_INFO:
+            IOCTL_GET(request_type, CHANNELS_INFO, apple80211_channels_info);
+            break;
         case APPLE80211_IOC_PEER_CACHE_MAXIMUM_SIZE:
             IOCTL(request_type, PEER_CACHE_MAXIMUM_SIZE, apple80211_peer_cache_maximum_size);
             break;
@@ -140,10 +139,9 @@ apple80211VirtualRequest(UInt request_type, int request_number, IO80211VirtualIn
             break;
         default:
         unhandled:
-            if (!ml_at_interrupt_context()) {
+            if (!ml_at_interrupt_context())
                 XYLog("%s Unhandled IOCTL %s (%d) %s\n", __FUNCTION__, IOCTL_NAMES[request_number >= ARRAY_SIZE(IOCTL_NAMES) ? 0: request_number],
                       request_number, request_type == SIOCGA80211 ? "get" : (request_type == SIOCSA80211 ? "set" : "other"));
-            }
             break;
     }
     
@@ -175,9 +173,8 @@ IOReturn AirportItlwm::
 getAWDL_PEER_TRAFFIC_REGISTRATION(OSObject *object, struct apple80211_awdl_peer_traffic_registration *)
 {
     XYLog("%s\n", __FUNCTION__);
-    if (fAWDLInterface) {
+    if (fAWDLInterface)
         return 45;
-    }
     return 22;
 }
 
@@ -217,9 +214,8 @@ IOReturn AirportItlwm::
 getSYNC_FRAME_TEMPLATE(OSObject *object, struct apple80211_awdl_sync_frame_template *data)
 {
     XYLog("%s\n", __FUNCTION__);
-    if (syncFrameTemplate == NULL || syncFrameTemplateLength == 0) {
+    if (syncFrameTemplate == NULL || syncFrameTemplateLength == 0)
         return kIOReturnError;
-    }
     data->version = APPLE80211_VERSION;
     data->payload_len = syncFrameTemplateLength;
     memcpy(data->payload, syncFrameTemplate, syncFrameTemplateLength);
@@ -230,9 +226,8 @@ IOReturn AirportItlwm::
 setSYNC_FRAME_TEMPLATE(OSObject *object, struct apple80211_awdl_sync_frame_template *data)
 {
     XYLog("%s payload_len=%d\n", __FUNCTION__, data->payload_len);
-    if (data->payload_len <= 0) {
+    if (data->payload_len <= 0)
         return kIOReturnError;
-    }
     if (syncFrameTemplate != NULL && syncFrameTemplateLength > 0) {
         IOFree(syncFrameTemplate, syncFrameTemplateLength);
         syncFrameTemplateLength = 0;
@@ -286,19 +281,21 @@ IOReturn AirportItlwm::
 getCHANNELS_INFO(OSObject *object, struct apple80211_channels_info *data)
 {
     XYLog("%s\n", __FUNCTION__);
+    struct ieee80211com *ic = fHalService->get80211Controller();
     memset(data, 0, sizeof(*data));
     data->version = APPLE80211_VERSION;
-    data->unk1 = 0;
-    data->num_chan_specs = 3;
-    data->channels[0].chan_num = 6;
-    data->channels[0].support_80Mhz = 0;
-    data->channels[0].support_40Mhz = 0;
-    data->channels[1].chan_num = 44;
-    data->channels[1].support_80Mhz = 1;
-    data->channels[1].support_40Mhz = 1;
-    data->channels[2].chan_num = 149;
-    data->channels[2].support_80Mhz = 1;
-    data->channels[2].support_40Mhz = 1;
+    for (int i = 0; i < IEEE80211_CHAN_MAX; i++) {
+        struct ieee80211_channel *channel = &ic->ic_channels[i];
+        if (channel->ic_freq != 0) {
+            int chanNum = ieee80211_chan2ieee(ic, channel);
+            data->chan_num[data->num_chan_specs] = chanNum;
+            data->support_80Mhz[data->num_chan_specs] = IEEE80211_IS_CHAN_VHT80(channel);
+            data->support_40Mhz[data->num_chan_specs] = IEEE80211_IS_CHAN_HT40(channel) || IEEE80211_IS_CHAN_VHT40(channel);
+            data->num_chan_specs++;
+            if (data->num_chan_specs >= APPLE80211_MAX_CHANNELS)
+                break;
+        }
+    }
     return kIOReturnSuccess;
 }
 
@@ -410,11 +407,11 @@ getAWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE(OSObject *object, struct apple80211_awd
     return kIOReturnSuccess;
 }
 
+#if 0
 static void dumpAWDLChannelSeqs(struct apple80211_awdl_sync_channel_sequence *data)
 {
-    if (data == nullptr) {
+    if (data == nullptr)
         return;
-    }
     XYLog("%s length %u step count %u duplicate %u fill %d encoding %u\n", __FUNCTION__, data->length, data->step_count, data->duplicate_count, data->fill_channel, data->encoding);
     for (int i = 0; i < data->length; i++) {
         struct apple80211_channel_sequence seq = data->seqs[i];
@@ -424,12 +421,15 @@ static void dumpAWDLChannelSeqs(struct apple80211_awdl_sync_channel_sequence *da
         XYLog("%s %d 0x%04x=%d%s%s%s\n", __FUNCTION__, i, seq.flags, (uint8_t)seq.flags, band != 0x800 ? (band == 0xC00 ? ",20MHz" : ",unknown") : ",20MHz", channel != 0x200 ? (channel == 0x100 ? ",-1" : ",none") : ",1", (seq.flags & 0xF000) == 4096 ? ",5GHz" : ",unknown");
     }
 }
+#endif
 
 IOReturn AirportItlwm::
 setAWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE(OSObject *object, struct apple80211_awdl_sync_channel_sequence *data)
 {
     XYLog("%s\n", __FUNCTION__);
+#if 0
     dumpAWDLChannelSeqs(data);
+#endif
     return kIOReturnSuccess;
 }
 
